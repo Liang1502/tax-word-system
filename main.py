@@ -70,13 +70,12 @@ def generate_word(data: RequestData):
             "evidence_list": data.evidence_list
         }
 
-        filename = f"申請書_{data.apply_year}{data.apply_month}{data.apply_day}.docx"
+        filename = f"tax_application_{data.apply_year}{data.apply_month}{data.apply_day}.docx"
         filepath = os.path.join(OUTPUT_DIR, filename)
 
         doc.render(context)
         doc.save(filepath)
 
-        # 再檢查 placeholder
         check_doc = Document(filepath)
 
         for p in check_doc.paragraphs:
