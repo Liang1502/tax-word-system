@@ -1,139 +1,76 @@
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from docxtpl import DocxTemplate
 from docx import Document
-import os
+import io
 
 app = FastAPI()
 
-TEMPLATE_PATH = "templates/納保申請書_官方格式_可套填_v8.docx"
-OUTPUT_DIR = "output"
 
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-
-class RequestData(BaseModel):
-    apply_year: str
-    apply_month: str
-    apply_day: str
-
-    formal_statement: str
-
-    case_category_suggestion: str
-    tax_items_suggestion: str
-
-    apply_method_suggestion: str
-    reply_method_suggestion: str
-    notify_method_suggestion: str
-
-    notify_email: str
-    evidence_list: str
+class ApplicationData(BaseModel):
+    application_item: str | None = ""
+    tax_type: str | None = ""
+    case_description: str | None = ""
+    applicant_name: str | None = ""
+    applicant_id: str | None = ""
+    applicant_address: str | None = ""
+    contact_phone: str | None = ""
+    email: str | None = ""
+    reply_method: str | None = ""
+    notification_method: str | None = ""
+    agent_name: str | None = ""
+    agent_phone: str | None = ""
+    evidence_list: str | None = ""
 
 
-@app.get("/")
-def root():
-    return {"message": "tax-word-system running"}
+def create_word_document(data: ApplicationData):
+
+    doc = Document()
+
+    doc.add_heading("納稅者權利保護事項申請書", level=1)
+
+    doc.add_paragraph(f"申請事項：{data.application_item}")
+    doc.add_paragraph(f"稅目別：{data.tax_type}")
+    doc.add_paragraph(f"案件事實與理由：{data.case_description}")
+
+    doc.add_paragraph("")
+
+    doc.add_paragraph(f"申請人姓名：{data.applicant_name}")
+    doc.add_paragraph(f"身分證字號：{data.applicant_id}")
+    doc.add_paragraph(f"地址：{data.applicant_address}")
+    doc.add_paragraph(f"聯絡電話：{data.contact_phone}")
+    doc.add_paragraph(f"Email：{data.email}")
+
+    doc.add_paragraph("")
+
+    doc.add_paragraph(f"回覆方式：{data.reply_method}")
+    doc.add_paragraph(f"通知方式：{data.notification_method}")
+
+    doc.add_paragraph("")
+
+    doc.add_paragraph(f"代理人：{data.agent_name}")
+    doc.add_paragraph(f"代理人電話：{data.agent_phone}")
+
+    doc.add_paragraph("")
+
+    doc.add_paragraph(f"證明文件：{data.evidence_list}")
+
+    return doc
 
 
 @app.post("/generate-word")
-def generate_word(data: RequestData):
+async def generate_word(data: ApplicationData):
 
-    try:
+    doc = create_word_document(data)
 
-        if not os.path.exists(TEMPLATE_PATH):
-            return JSONResponse(
-                status_code=500,
-                content={
-                    "message": "產製失敗",
-                    "reason": f"找不到模板檔案: {TEMPLATE_PATH}"
-                }
-            )
+    file_stream = io.BytesIO()
+    doc.save(file_stream)
+    file_stream.seek(0)
 
-        doc = DocxTemplate(TEMPLATE_PATH)
-
-        context = {
-            "apply_year": data.apply_year,
-            "apply_month": data.apply_month,
-            "apply_day": data.apply_day,
-
-            "formal_statement": data.formal_statement,
-
-            "case_category_suggestion": data.case_category_suggestion,
-            "tax_items_suggestion": data.tax_items_suggestion,
-
-            "apply_method_suggestion": data.apply_method_suggestion,
-            "reply_method_suggestion": data.reply_method_suggestion,
-            "notify_method_suggestion": data.notify_method_suggestion,
-
-            "notify_email": data.notify_email,
-            "evidence_list": data.evidence_list
+    return StreamingResponse(
+        file_stream,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": "attachment; filename=tax_application.docx"
         }
-
-        filename = f"tax_application_{data.apply_year}{data.apply_month}{data.apply_day}.docx"
-        filepath = os.path.join(OUTPUT_DIR, filename)
-
-        doc.render(context)
-        doc.save(filepath)
-
-        check_doc = Document(filepath)
-
-        for p in check_doc.paragraphs:
-            if "{{" in p.text and "}}" in p.text:
-                return JSONResponse(
-                    status_code=500,
-                    content={
-                        "message": "產製失敗",
-                        "reason": "文件仍殘留 placeholder"
-                    }
-                )
-
-        for table in check_doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    for p in cell.paragraphs:
-                        if "{{" in p.text and "}}" in p.text:
-                            return JSONResponse(
-                                status_code=500,
-                                content={
-                                    "message": "產製失敗",
-                                    "reason": "文件仍殘留 placeholder"
-                                }
-                            )
-
-        download_url = f"https://tax-word-system-production.up.railway.app/download/{filename}"
-
-        return JSONResponse(
-            content={
-                "success": True,
-                "filename": filename,
-                "download_url": download_url
-            }
-        )
-
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={
-                "message": "產製失敗",
-                "reason": str(e)
-            }
-        )
-
-
-@app.get("/download/{filename}")
-def download_file(filename: str):
-
-    filepath = os.path.join(OUTPUT_DIR, filename)
-
-    if not os.path.exists(filepath):
-        return JSONResponse(
-            status_code=404,
-            content={"error": "file not found"}
-        )
-
-    return FileResponse(
-        path=filepath,
-        filename=filename,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
