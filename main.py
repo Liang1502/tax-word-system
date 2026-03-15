@@ -39,16 +39,16 @@ def root():
 @app.post("/generate-word")
 def generate_word(data: RequestData):
 
-    if not os.path.exists(TEMPLATE_PATH):
-        return JSONResponse(
-            status_code=500,
-            content={
-                "message": "產製失敗",
-                "reason": f"找不到模板檔案：{TEMPLATE_PATH}"
-            }
-        )
-
     try:
+
+        if not os.path.exists(TEMPLATE_PATH):
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "message": "產製失敗",
+                    "reason": f"找不到模板檔案: {TEMPLATE_PATH}"
+                }
+            )
 
         doc = DocxTemplate(TEMPLATE_PATH)
 
@@ -76,7 +76,7 @@ def generate_word(data: RequestData):
         doc.render(context)
         doc.save(filepath)
 
-        # 再開一次檢查 placeholder
+        # 再檢查 placeholder
         check_doc = Document(filepath)
 
         for p in check_doc.paragraphs:
@@ -105,11 +105,13 @@ def generate_word(data: RequestData):
         return FileResponse(
             path=filepath,
             filename=filename,
-            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            }
         )
 
     except Exception as e:
-
         return JSONResponse(
             status_code=500,
             content={
