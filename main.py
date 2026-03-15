@@ -60,6 +60,20 @@ def generate_word(data: RequestData):
 
     doc.save(filepath)
 
+    # placeholder 檢查
+    check_doc = DocxTemplate(filepath)
+
+    for p in check_doc.docx.paragraphs:
+        if "{{" in p.text and "}}" in p.text:
+            return {"message": "產製失敗"}
+
+    for table in check_doc.docx.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    if "{{" in p.text and "}}" in p.text:
+                        return {"message": "產製失敗"}
+
     return FileResponse(
         path=filepath,
         filename=filename,
