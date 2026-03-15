@@ -44,11 +44,12 @@ def generate_word(data: RequestData):
             status_code=500,
             content={
                 "message": "產製失敗",
-                "reason": f"找不到模板檔案: {TEMPLATE_PATH}"
+                "reason": f"找不到模板檔案：{TEMPLATE_PATH}"
             }
         )
 
     try:
+
         doc = DocxTemplate(TEMPLATE_PATH)
 
         context = {
@@ -75,14 +76,17 @@ def generate_word(data: RequestData):
         doc.render(context)
         doc.save(filepath)
 
-        # 再開一次檔案檢查 placeholder
+        # 再開一次檢查 placeholder
         check_doc = Document(filepath)
 
         for p in check_doc.paragraphs:
             if "{{" in p.text and "}}" in p.text:
                 return JSONResponse(
                     status_code=500,
-                    content={"message": "產製失敗", "reason": "文件仍殘留 placeholder"}
+                    content={
+                        "message": "產製失敗",
+                        "reason": "文件仍殘留 placeholder"
+                    }
                 )
 
         for table in check_doc.tables:
@@ -92,7 +96,10 @@ def generate_word(data: RequestData):
                         if "{{" in p.text and "}}" in p.text:
                             return JSONResponse(
                                 status_code=500,
-                                content={"message": "產製失敗", "reason": "文件仍殘留 placeholder"}
+                                content={
+                                    "message": "產製失敗",
+                                    "reason": "文件仍殘留 placeholder"
+                                }
                             )
 
         return FileResponse(
@@ -102,6 +109,7 @@ def generate_word(data: RequestData):
         )
 
     except Exception as e:
+
         return JSONResponse(
             status_code=500,
             content={
