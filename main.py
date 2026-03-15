@@ -101,12 +101,13 @@ def generate_word(data: RequestData):
                                 }
                             )
 
-        return FileResponse(
-            path=filepath,
-            filename=filename,
-            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"'
+        download_url = f"https://tax-word-system-production.up.railway.app/download/{filename}"
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "filename": filename,
+                "download_url": download_url
             }
         )
 
@@ -118,3 +119,21 @@ def generate_word(data: RequestData):
                 "reason": str(e)
             }
         )
+
+
+@app.get("/download/{filename}")
+def download_file(filename: str):
+
+    filepath = os.path.join(OUTPUT_DIR, filename)
+
+    if not os.path.exists(filepath):
+        return JSONResponse(
+            status_code=404,
+            content={"error": "file not found"}
+        )
+
+    return FileResponse(
+        path=filepath,
+        filename=filename,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
