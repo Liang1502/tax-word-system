@@ -1,16 +1,19 @@
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 from docx import Document
 import re
 import uuid
 import time
 import asyncio
-import io
+import os
 
 app = FastAPI()
 
 TEMPLATE_PATH = "templates/納保申請書_官方格式_可套填_v8.docx"
+
+OUTPUT_DIR = "output"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 download_store = {}
 
@@ -155,16 +158,18 @@ def generate_word(data: GenerateRequest):
                 }
             )
 
-        memory_file = io.BytesIO()
-        doc.save(memory_file)
-        memory_file.seek(0)
+        filename = f"申請書_{data.apply_year}{data.apply_month}{data.apply_day}.docx"
+
+        unique_name = f"{uuid.uuid4()}_{filename}"
+
+        file_path = os.path.join(OUTPUT_DIR, unique_name)
+
+        doc.save(file_path)
 
         token = str(uuid.uuid4())
 
-        filename = f"申請書_{data.apply_year}{data.apply_month}{data.apply_day}.docx"
-
         download_store[token] = {
-            "file": memory_file,
+            "path": file_path,
             "filename": filename,
             "expire_time": time.time() + 1800,
             "used": False
@@ -199,7 +204,12 @@ def download_file(token: str):
     record = download_store[token]
 
     if time.time() > record["expire_time"]:
+
+        if os.path.exists(record["path"]):
+            os.remove(record["path"])
+
         del download_store[token]
+
         return JSONResponse(status_code=410, content={"message": "link expired"})
 
     if record["used"]:
@@ -207,19 +217,11 @@ def download_file(token: str):
 
     record["used"] = True
 
-    file_stream = record["file"]
-    file_stream.seek(0)
-
-    response = StreamingResponse(
-        file_stream,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    return FileResponse(
+        record["path"],
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=record["filename"]
     )
-
-    response.headers["Content-Disposition"] = f'attachment; filename="{record["filename"]}"'
-
-    del download_store[token]
-
-    return response
 
 
 async def cleanup_expired():
@@ -235,6 +237,12 @@ async def cleanup_expired():
                 expired.append(token)
 
         for token in expired:
+
+            record = download_store[token]
+
+            if os.path.exists(record["path"]):
+                os.remove(record["path"])
+
             del download_store[token]
 
         await asyncio.sleep(300)
