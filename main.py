@@ -1,15 +1,18 @@
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from docx import Document
-import os
 import re
+import uuid
+import time
+import asyncio
+import io
 
 app = FastAPI()
 
 TEMPLATE_PATH = "templates/納保申請書_官方格式_可套填_v8.docx"
-OUTPUT_DIR = "output"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+download_store = {}
 
 
 class GenerateRequest(BaseModel):
@@ -43,15 +46,11 @@ class GenerateRequest(BaseModel):
 def replace_text(paragraph, replacements):
 
     text = paragraph.text
-    changed = False
 
     for key, value in replacements.items():
-        if key in text:
-            text = text.replace(key, value)
-            changed = True
+        text = text.replace(key, value)
 
-    if changed:
-        paragraph.text = text
+    paragraph.text = text
 
 
 def replace_all(doc, replacements):
@@ -144,16 +143,8 @@ def generate_word(data: GenerateRequest):
         if data.notify_email.strip() == "":
             remove_email_label(doc)
 
-        safe_filename = f"application_{data.apply_year}{data.apply_month}{data.apply_day}.docx"
-        display_filename = f"申請書_{data.apply_year}{data.apply_month}{data.apply_day}.docx"
+        if has_placeholder(doc):
 
-        output_path = os.path.join(OUTPUT_DIR, safe_filename)
-
-        doc.save(output_path)
-
-        check_doc = Document(output_path)
-
-        if has_placeholder(check_doc):
             return JSONResponse(
                 status_code=500,
                 content={
@@ -163,11 +154,26 @@ def generate_word(data: GenerateRequest):
                 }
             )
 
+        memory_file = io.BytesIO()
+        doc.save(memory_file)
+        memory_file.seek(0)
+
+        token = str(uuid.uuid4())
+
+        filename = f"申請書_{data.apply_year}{data.apply_month}{data.apply_day}.docx"
+
+        download_store[token] = {
+            "file": memory_file,
+            "filename": filename,
+            "expire_time": time.time() + 1800,
+            "used": False
+        }
+
         return JSONResponse(
             content={
                 "success": True,
-                "filename": display_filename,
-                "download_url": f"https://tax-word-system-production.up.railway.app/download/{safe_filename}"
+                "filename": filename,
+                "download_url": f"https://tax-word-system-production.up.railway.app/download/{token}"
             }
         )
 
@@ -183,22 +189,54 @@ def generate_word(data: GenerateRequest):
         )
 
 
-@app.get("/download/{filename}")
-def download_file(filename: str):
+@app.get("/download/{token}")
+def download_file(token: str):
 
-    path = os.path.join(OUTPUT_DIR, filename)
+    if token not in download_store:
+        return JSONResponse(status_code=404, content={"message": "file not found"})
 
-    if not os.path.exists(path):
-        return JSONResponse(
-            status_code=404,
-            content={
-                "success": False,
-                "message": "file not found"
-            }
-        )
+    record = download_store[token]
 
-    return FileResponse(
-        path,
-        filename=filename,
+    if time.time() > record["expire_time"]:
+        del download_store[token]
+        return JSONResponse(status_code=410, content={"message": "link expired"})
+
+    if record["used"]:
+        return JSONResponse(status_code=410, content={"message": "file already downloaded"})
+
+    record["used"] = True
+
+    response = StreamingResponse(
+        record["file"],
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
+
+    response.headers["Content-Disposition"] = f'attachment; filename="{record["filename"]}"'
+
+    del download_store[token]
+
+    return response
+
+
+async def cleanup_expired():
+
+    while True:
+
+        now = time.time()
+
+        expired = []
+
+        for token, record in download_store.items():
+            if now > record["expire_time"]:
+                expired.append(token)
+
+        for token in expired:
+            del download_store[token]
+
+        await asyncio.sleep(300)
+
+
+@app.on_event("startup")
+async def startup_event():
+
+    asyncio.create_task(cleanup_expired())
