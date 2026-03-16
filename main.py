@@ -48,7 +48,8 @@ def replace_text(paragraph, replacements):
     text = paragraph.text
 
     for key, value in replacements.items():
-        text = text.replace(key, value)
+        if key in text:
+            text = text.replace(key, value)
 
     paragraph.text = text
 
@@ -205,6 +206,8 @@ def download_file(token: str):
         return JSONResponse(status_code=410, content={"message": "file already downloaded"})
 
     record["used"] = True
+
+    record["file"].seek(0)
 
     response = StreamingResponse(
         record["file"],
