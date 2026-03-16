@@ -207,10 +207,11 @@ def download_file(token: str):
 
     record["used"] = True
 
-    record["file"].seek(0)
+    file_stream = record["file"]
+    file_stream.seek(0)
 
     response = StreamingResponse(
-        record["file"],
+        file_stream,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     )
 
