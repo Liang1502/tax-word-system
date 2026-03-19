@@ -171,7 +171,7 @@ def generate_word(data: GenerateRequest):
         download_store[token] = {
             "path": file_path,
             "filename": filename,
-            "expire_time": time.time() + 1800,
+            "expire_time": time.time() + 600,
             "used": False
         }
 
@@ -245,7 +245,7 @@ async def cleanup_expired():
 
             del download_store[token]
 
-        await asyncio.sleep(300)
+        await asyncio.sleep(60)
 
 
 @app.on_event("startup")
