@@ -158,7 +158,7 @@ def generate_word(data: GenerateRequest):
                 }
             )
 
-        filename = f"申請書_{data.apply_year}{data.apply_month}{data.apply_day}.docx"
+        filename = f"申請書_{data.apply_year}{int(data.apply_month):02d}{int(data.apply_day):02d}.docx"
 
         unique_name = f"{uuid.uuid4()}_{filename}"
 
@@ -211,11 +211,6 @@ def download_file(token: str):
         del download_store[token]
 
         return JSONResponse(status_code=410, content={"message": "link expired"})
-
-    if record["used"]:
-        return JSONResponse(status_code=410, content={"message": "file already downloaded"})
-
-    record["used"] = True
 
     return FileResponse(
         record["path"],
