@@ -212,6 +212,11 @@ def download_file(token: str):
 
         return JSONResponse(status_code=410, content={"message": "link expired"})
 
+    if record["used"]:
+        return JSONResponse(status_code=410, content={"message": "file already downloaded"})
+
+    record["used"] = True
+
     return FileResponse(
         record["path"],
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
