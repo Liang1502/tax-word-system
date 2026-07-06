@@ -2,6 +2,7 @@ from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from pydantic import BaseModel
 from docx import Document
+import hashlib
 import re
 import uuid
 import time
@@ -16,6 +17,31 @@ OUTPUT_DIR = "output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 download_store = {}
+
+# 追蹤 /form URL 單次使用狀態：hash → expire_time（首次存取後 30 分鐘內封鎖）
+form_access_store: dict[str, float] = {}
+
+EXPIRED_HTML = """<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>連結已失效</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Noto Sans TC',sans-serif;background:#f0f4f8;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.box{background:#fff;border-radius:12px;padding:2rem 2.5rem;box-shadow:0 2px 12px rgba(0,0,0,.1);text-align:center;max-width:480px}
+h1{color:#c0392b;font-size:1.15rem;margin-bottom:1rem}
+p{color:#555;font-size:.93rem;line-height:1.7}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>⚠️ 此連結已失效</h1>
+  <p>每個申請書產製連結僅能使用一次。<br>如需重新產製，請返回對話重新操作。</p>
+</div>
+</body>
+</html>"""
 
 
 class GenerateRequest(BaseModel):
@@ -206,8 +232,34 @@ def form_page(
     reply_method_suggestion: str = Query(default=""),
     notify_method_suggestion: str = Query(default=""),
     formal_statement: str = Query(default=""),
-):
-    def esc(s):
+) -> HTMLResponse:
+
+    # 單次使用邏輯：只有在帶有實質參數時啟用
+    has_params = bool(apply_year or formal_statement or case_category_suggestion)
+
+    if has_params:
+        param_str = "|".join([
+            apply_year, apply_month, apply_day,
+            case_category_suggestion, tax_items_suggestion,
+            apply_method_suggestion, reply_method_suggestion,
+            notify_method_suggestion, formal_statement,
+        ])
+        url_hash = hashlib.sha256(param_str.encode("utf-8")).hexdigest()
+
+        now = time.time()
+
+        if url_hash in form_access_store:
+            if now <= form_access_store[url_hash]:
+                # 30 分鐘內第二次點擊 → 失效
+                return HTMLResponse(content=EXPIRED_HTML, status_code=410)
+            else:
+                # 超過 30 分鐘 → 允許重新使用
+                del form_access_store[url_hash]
+
+        # 首次存取：登記，有效封鎖期 30 分鐘
+        form_access_store[url_hash] = now + 1800
+
+    def esc(s: str) -> str:
         return s.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
 
     html = f"""<!DOCTYPE html>
@@ -387,20 +439,24 @@ async def cleanup_expired():
 
         now = time.time()
 
-        expired = []
-
-        for token, record in download_store.items():
-            if now > record["expire_time"]:
-                expired.append(token)
-
-        for token in expired:
-
+        # 清理 download_store
+        expired_downloads = [
+            token for token, record in download_store.items()
+            if now > record["expire_time"]
+        ]
+        for token in expired_downloads:
             record = download_store[token]
-
             if os.path.exists(record["path"]):
                 os.remove(record["path"])
-
             del download_store[token]
+
+        # 清理 form_access_store
+        expired_forms = [
+            h for h, expire_time in form_access_store.items()
+            if now > expire_time
+        ]
+        for h in expired_forms:
+            del form_access_store[h]
 
         await asyncio.sleep(60)
 
