@@ -1,5 +1,5 @@
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi import FastAPI, Query
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from pydantic import BaseModel
 from docx import Document
 import re
@@ -195,6 +195,106 @@ def generate_word(data: GenerateRequest):
         )
 
 
+@app.get("/form", response_class=HTMLResponse)
+def form_page(
+    apply_year: str = Query(default=""),
+    apply_month: str = Query(default=""),
+    apply_day: str = Query(default=""),
+    case_category_suggestion: str = Query(default=""),
+    tax_items_suggestion: str = Query(default=""),
+    apply_method_suggestion: str = Query(default=""),
+    reply_method_suggestion: str = Query(default=""),
+    notify_method_suggestion: str = Query(default=""),
+):
+    def esc(s):
+        return s.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+
+    html = f"""<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>納保申請書產製</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:'Noto Sans TC',sans-serif;background:#f0f4f8;padding:20px;min-height:100vh}}
+.container{{max-width:680px;margin:0 auto;background:#fff;border-radius:12px;padding:2rem;box-shadow:0 2px 12px rgba(0,0,0,.1)}}
+h1{{font-size:1.3rem;color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:.6rem;margin-bottom:1.2rem}}
+.field{{margin-bottom:1rem}}
+label{{display:block;font-weight:600;margin-bottom:.3rem;color:#444;font-size:.9rem}}
+input,textarea{{width:100%;padding:.55rem .75rem;border:1px solid #ccc;border-radius:6px;font-size:.95rem;font-family:inherit}}
+textarea{{height:200px;resize:vertical;line-height:1.6}}
+.row{{display:grid;grid-template-columns:1fr 1fr 1fr;gap:.8rem}}
+.hint.warn{{color:#e67e22;font-weight:600;font-size:.8rem;margin-top:.25rem}}
+button{{background:#2980b9;color:#fff;border:none;padding:.85rem;border-radius:8px;font-size:1rem;cursor:pointer;width:100%;margin-top:.5rem;font-weight:600}}
+button:disabled{{background:#aaa;cursor:not-allowed}}
+#spinner{{display:none;text-align:center;padding:.8rem;color:#555}}
+.error{{color:#c0392b;background:#fdf0f0;border:1px solid #f5c6cb;padding:.75rem;border-radius:6px;margin-top:.8rem}}
+.success{{color:#1e8449;background:#eafaf1;border:1px solid #a9dfbf;padding:.75rem;border-radius:6px;margin-top:.8rem}}
+.divider{{border:none;border-top:1px solid #eee;margin:1.2rem 0}}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>📄 納保申請書產製</h1>
+  <p style="color:#666;font-size:.88rem;margin-bottom:1.2rem">由納保申請助理轉介。請將助理產出的「申請事由」貼入下方欄位，其他欄位已自動填入，確認後點「產製申請書」即可下載。</p>
+  <div class="row">
+    <div class="field"><label>申請年份（民國）</label><input id="apply_year" value="{esc(apply_year)}" placeholder="114"></div>
+    <div class="field"><label>月份</label><input id="apply_month" value="{esc(apply_month)}" placeholder="3"></div>
+    <div class="field"><label>日期</label><input id="apply_day" value="{esc(apply_day)}" placeholder="15"></div>
+  </div>
+  <div class="field"><label>案件類型建議</label><input id="case_category_suggestion" value="{esc(case_category_suggestion)}"></div>
+  <div class="field"><label>稅目建議</label><input id="tax_items_suggestion" value="{esc(tax_items_suggestion)}"></div>
+  <hr class="divider">
+  <div class="field">
+    <label>✏️ 申請事由（請從助理對話中複製並貼入）</label>
+    <textarea id="formal_statement" placeholder="請將 ChatGPT 助理產出的「申請事由」完整貼入此處…"></textarea>
+    <div class="hint warn">※ 此欄需手動貼上，其餘欄位已自動填入</div>
+  </div>
+  <hr class="divider">
+  <div class="field"><label>申請方式</label><input id="apply_method_suggestion" value="{esc(apply_method_suggestion)}"></div>
+  <div class="field"><label>回覆方式</label><input id="reply_method_suggestion" value="{esc(reply_method_suggestion)}"></div>
+  <div class="field"><label>通知方式</label><input id="notify_method_suggestion" value="{esc(notify_method_suggestion)}"></div>
+  <button id="btn" onclick="generate()">產製申請書</button>
+  <div id="spinner">⏳ 正在產製，請稍候…</div>
+  <div id="result"></div>
+</div>
+<script>
+async function generate() {{
+  const btn = document.getElementById('btn');
+  const spinner = document.getElementById('spinner');
+  const result = document.getElementById('result');
+  const formal = document.getElementById('formal_statement').value.trim();
+  if (!formal) {{ result.innerHTML = '<div class="error">⚠️ 請先貼入申請事由！</div>'; return; }}
+  btn.disabled = true; spinner.style.display = 'block'; result.innerHTML = '';
+  const payload = {{
+    apply_year: document.getElementById('apply_year').value.trim(),
+    apply_month: document.getElementById('apply_month').value.trim(),
+    apply_day: document.getElementById('apply_day').value.trim(),
+    formal_statement: formal,
+    case_category_suggestion: document.getElementById('case_category_suggestion').value.trim(),
+    tax_items_suggestion: document.getElementById('tax_items_suggestion').value.trim(),
+    apply_method_suggestion: document.getElementById('apply_method_suggestion').value.trim(),
+    reply_method_suggestion: document.getElementById('reply_method_suggestion').value.trim(),
+    notify_method_suggestion: document.getElementById('notify_method_suggestion').value.trim(),
+    notify_email: '', evidence_list: ''
+  }};
+  try {{
+    const res = await fetch('/generate-word', {{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(payload)}});
+    const json = await res.json();
+    if (json.success && json.download_url) {{
+      result.innerHTML = '<div class="success">✅ 申請書已產製！若下載未自動開始，<a href="' + json.download_url + '" target="_blank">點此下載</a></div>';
+      setTimeout(() => {{ window.location.href = json.download_url; }}, 500);
+    }} else {{
+      result.innerHTML = '<div class="error">❌ 產製失敗：' + (json.reason || json.message || '未知錯誤') + '</div>';
+    }}
+  }} catch(e) {{ result.innerHTML = '<div class="error">❌ 網路錯誤：' + e.message + '</div>'; }}
+  finally {{ btn.disabled = false; spinner.style.display = 'none'; }}
+}}
+</script>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
 @app.get("/download/{token}")
 def download_file(token: str):
 
