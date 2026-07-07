@@ -133,6 +133,48 @@ def has_placeholder(doc):
     return False
 
 
+def normalize_choice(value: str, mapping: dict[str, str]) -> str:
+    value = (value or "").strip()
+    return mapping.get(value, value)
+
+
+CASE_CATEGORY_CODES = {
+    "1": "稅捐爭議溝通與協調",
+    "2": "申訴或陳情",
+    "3": "行政救濟諮詢與協助",
+}
+
+TAX_ITEM_CODES = {
+    "1": "地價稅",
+    "2": "使用牌照稅",
+    "3": "房屋稅",
+    "4": "娛樂稅",
+    "5": "印花稅",
+    "land": "地價稅",
+    "vehicle": "使用牌照稅",
+    "house": "房屋稅",
+    "entertainment": "娛樂稅",
+    "stamp": "印花稅",
+}
+
+APPLY_METHOD_CODES = {
+    "1": "現場申請",
+    "2": "書面或傳真申請",
+}
+
+REPLY_METHOD_CODES = {
+    "1": "現場答復",
+    "2": "公文",
+    "3": "電話",
+}
+
+NOTIFY_METHOD_CODES = {
+    "1": "電子郵件",
+    "2": "簡訊",
+    "3": "無須通知",
+}
+
+
 @app.post("/generate-word")
 def generate_word(data: GenerateRequest):
 
@@ -232,7 +274,26 @@ def form_page(
     reply_method_suggestion: str = Query(default=""),
     notify_method_suggestion: str = Query(default=""),
     formal_statement: str = Query(default=""),
+    y: str = Query(default=""),
+    m: str = Query(default=""),
+    d: str = Query(default=""),
+    c: str = Query(default=""),
+    t: str = Query(default=""),
+    a: str = Query(default=""),
+    r: str = Query(default=""),
+    n: str = Query(default=""),
+    s: str = Query(default=""),
 ) -> HTMLResponse:
+
+    apply_year = apply_year or y
+    apply_month = apply_month or m
+    apply_day = apply_day or d
+    case_category_suggestion = case_category_suggestion or normalize_choice(c, CASE_CATEGORY_CODES)
+    tax_items_suggestion = tax_items_suggestion or normalize_choice(t, TAX_ITEM_CODES)
+    apply_method_suggestion = apply_method_suggestion or normalize_choice(a, APPLY_METHOD_CODES)
+    reply_method_suggestion = reply_method_suggestion or normalize_choice(r, REPLY_METHOD_CODES)
+    notify_method_suggestion = notify_method_suggestion or normalize_choice(n, NOTIFY_METHOD_CODES)
+    formal_statement = formal_statement or s
 
     # 單次使用邏輯：只有在帶有實質參數時啟用
     has_params = bool(apply_year or formal_statement or case_category_suggestion)
