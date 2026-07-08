@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from pydantic import BaseModel
 from docx import Document
 import hashlib
+import json
 import re
 import uuid
 import time
@@ -15,6 +16,7 @@ TEMPLATE_PATH = "templates/納保申請書_官方格式_可套填_v8.docx"
 
 OUTPUT_DIR = "output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+FEEDBACK_PATH = os.path.join(OUTPUT_DIR, "feedback.jsonl")
 
 download_store = {}
 
@@ -70,6 +72,15 @@ class GenerateRequest(BaseModel):
     agent_phone: str = ""
 
     evidence_list: str = ""
+
+
+class FeedbackRequest(BaseModel):
+
+    rating: int
+    comment: str = ""
+    stage: str = ""
+    case_category: str = ""
+    tax_item: str = ""
 
 
 def replace_text(paragraph, replacements):
@@ -136,6 +147,25 @@ def has_placeholder(doc):
 def normalize_choice(value: str, mapping: dict[str, str]) -> str:
     value = (value or "").strip()
     return mapping.get(value, value)
+
+
+def write_feedback(data: FeedbackRequest):
+    rating = int(data.rating)
+    if rating < 1 or rating > 5:
+        raise ValueError("rating must be between 1 and 5")
+
+    record = {
+        "id": str(uuid.uuid4()),
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
+        "rating": rating,
+        "comment": (data.comment or "").strip()[:1000],
+        "stage": (data.stage or "").strip()[:40],
+        "case_category": (data.case_category or "").strip()[:80],
+        "tax_item": (data.tax_item or "").strip()[:40],
+    }
+    with open(FEEDBACK_PATH, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return record
 
 
 CASE_CATEGORY_CODES = {
@@ -263,6 +293,120 @@ def generate_word(data: GenerateRequest):
         )
 
 
+@app.post("/feedback")
+def submit_feedback(data: FeedbackRequest):
+
+    try:
+        record = write_feedback(data)
+        return JSONResponse(content={"success": True, "id": record["id"]})
+    except Exception as e:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "message": "feedback rejected", "reason": str(e)}
+        )
+
+
+@app.get("/survey", response_class=HTMLResponse)
+def survey_page(
+    stage: str = Query(default="statement"),
+    c: str = Query(default=""),
+    t: str = Query(default=""),
+    case_category: str = Query(default=""),
+    tax_item: str = Query(default=""),
+) -> HTMLResponse:
+
+    case_category = case_category or normalize_choice(c, CASE_CATEGORY_CODES)
+    tax_item = tax_item or normalize_choice(t, TAX_ITEM_CODES)
+
+    def esc(s: str) -> str:
+        return s.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+
+    html = f"""<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>納保申請助理滿意度調查</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:'Noto Sans TC',sans-serif;background:#f0f4f8;padding:20px;min-height:100vh;display:flex;align-items:center;justify-content:center}}
+.box{{width:100%;max-width:560px;background:#fff;border-radius:12px;padding:2rem;box-shadow:0 2px 12px rgba(0,0,0,.1)}}
+h1{{font-size:1.25rem;color:#2c3e50;margin-bottom:.6rem}}
+p{{color:#666;font-size:.9rem;line-height:1.7;margin-bottom:1rem}}
+.ratings{{display:grid;grid-template-columns:repeat(5,1fr);gap:.5rem;margin:1rem 0}}
+.ratings button{{border:1px solid #b8c7d9;background:#fff;color:#2c3e50;border-radius:8px;padding:.8rem .2rem;font-size:1rem;cursor:pointer}}
+.ratings button.selected{{background:#2980b9;color:#fff;border-color:#2980b9}}
+textarea{{width:100%;height:120px;resize:vertical;border:1px solid #ccc;border-radius:8px;padding:.75rem;font-family:inherit;font-size:.95rem;line-height:1.5}}
+.submit{{width:100%;margin-top:1rem;border:0;border-radius:8px;background:#2980b9;color:#fff;padding:.85rem;font-size:1rem;font-weight:600;cursor:pointer}}
+.submit:disabled{{background:#aaa;cursor:not-allowed}}
+#msg{{margin-top:.8rem;font-size:.9rem}}
+.ok{{color:#1e8449}}.err{{color:#c0392b}}
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>納保申請助理滿意度調查</h1>
+  <p>請針對本次服務給予 1 至 5 分評分，也可以留下建議事項。請勿填寫姓名、電話、地址、車牌或其他個人資料。</p>
+  <div class="ratings" id="ratings">
+    <button type="button" data-rating="1">1</button>
+    <button type="button" data-rating="2">2</button>
+    <button type="button" data-rating="3">3</button>
+    <button type="button" data-rating="4">4</button>
+    <button type="button" data-rating="5">5</button>
+  </div>
+  <textarea id="comment" placeholder="建議事項（選填）"></textarea>
+  <button class="submit" id="submit" type="button" disabled>送出</button>
+  <div id="msg"></div>
+</div>
+<script>
+let rating = 0;
+const stage = {json.dumps(stage, ensure_ascii=False)};
+const caseCategory = {json.dumps(case_category, ensure_ascii=False)};
+const taxItem = {json.dumps(tax_item, ensure_ascii=False)};
+document.querySelectorAll('[data-rating]').forEach(btn => {{
+  btn.addEventListener('click', () => {{
+    rating = Number(btn.dataset.rating);
+    document.querySelectorAll('[data-rating]').forEach(b => b.classList.toggle('selected', b === btn));
+    document.getElementById('submit').disabled = false;
+  }});
+}});
+document.getElementById('submit').addEventListener('click', async () => {{
+  const submit = document.getElementById('submit');
+  const msg = document.getElementById('msg');
+  submit.disabled = true;
+  msg.textContent = '送出中...';
+  msg.className = '';
+  try {{
+    const res = await fetch('/feedback', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{
+        rating,
+        comment: document.getElementById('comment').value,
+        stage,
+        case_category: caseCategory,
+        tax_item: taxItem
+      }})
+    }});
+    const json = await res.json();
+    if (json.success) {{
+      msg.textContent = '感謝您的回饋。';
+      msg.className = 'ok';
+    }} else {{
+      throw new Error(json.reason || '送出失敗');
+    }}
+  }} catch (e) {{
+    msg.textContent = '送出失敗，請稍後再試。';
+    msg.className = 'err';
+    submit.disabled = false;
+  }}
+}});
+</script>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
 @app.get("/form", response_class=HTMLResponse)
 def form_page(
     apply_year: str = Query(default=""),
@@ -349,6 +493,14 @@ button:disabled{{background:#aaa;cursor:not-allowed}}
 .error{{color:#c0392b;background:#fdf0f0;border:1px solid #f5c6cb;padding:.75rem;border-radius:6px;margin-top:.8rem}}
 .success{{color:#1e8449;background:#eafaf1;border:1px solid #a9dfbf;padding:.75rem;border-radius:6px;margin-top:.8rem}}
 .divider{{border:none;border-top:1px solid #eee;margin:1.2rem 0}}
+.feedback{{display:none;margin-top:1rem;border:1px solid #d7e3ef;border-radius:10px;padding:1rem;background:#f8fbff}}
+.feedback-title{{font-weight:700;color:#2c3e50;margin-bottom:.35rem}}
+.feedback-note{{font-size:.82rem;color:#777;margin-bottom:.75rem;line-height:1.5}}
+.rating-row{{display:grid;grid-template-columns:repeat(5,1fr);gap:.4rem;margin-bottom:.75rem}}
+.rating-row button{{margin:0;background:#fff;color:#2c3e50;border:1px solid #b8c7d9;padding:.6rem .2rem}}
+.rating-row button.selected{{background:#2980b9;color:#fff;border-color:#2980b9}}
+#feedback_comment{{height:90px}}
+#feedback_msg{{font-size:.85rem;margin-top:.5rem}}
 </style>
 </head>
 <body>
@@ -407,9 +559,32 @@ button:disabled{{background:#aaa;cursor:not-allowed}}
   <button id="btn" onclick="generate()">產製申請書</button>
   <div id="spinner">⏳ 正在產製，請稍候…</div>
   <div id="result"></div>
+  <div class="feedback" id="feedback">
+    <div class="feedback-title">滿意度調查</div>
+    <div class="feedback-note">請針對本次申請書產製服務給予 1 至 5 分評分，也可以留下建議事項。請勿填寫姓名、電話、地址、車牌或其他個人資料。</div>
+    <div class="rating-row" id="feedback_ratings">
+      <button type="button" data-feedback-rating="1">1</button>
+      <button type="button" data-feedback-rating="2">2</button>
+      <button type="button" data-feedback-rating="3">3</button>
+      <button type="button" data-feedback-rating="4">4</button>
+      <button type="button" data-feedback-rating="5">5</button>
+    </div>
+    <textarea id="feedback_comment" placeholder="建議事項（選填）"></textarea>
+    <button id="feedback_submit" type="button" disabled onclick="submitFeedback()">送出回饋</button>
+    <div id="feedback_msg"></div>
+  </div>
 </div>
 
 <script>
+let feedbackRating = 0;
+document.querySelectorAll('[data-feedback-rating]').forEach(btn => {{
+  btn.addEventListener('click', () => {{
+    feedbackRating = Number(btn.dataset.feedbackRating);
+    document.querySelectorAll('[data-feedback-rating]').forEach(b => b.classList.toggle('selected', b === btn));
+    document.getElementById('feedback_submit').disabled = false;
+  }});
+}});
+
 async function generate() {{
   const btn = document.getElementById('btn');
   const spinner = document.getElementById('spinner');
@@ -448,6 +623,7 @@ async function generate() {{
     const json = await res.json();
     if (json.success && json.download_url) {{
       result.innerHTML = '<div class="success">✅ 申請書已產製完成！若下載未自動開始，<a href="' + json.download_url + '" target="_blank">請點此下載</a></div>';
+      document.getElementById('feedback').style.display = 'block';
       setTimeout(() => {{ window.location.href = json.download_url; }}, 500);
     }} else {{
       result.innerHTML = '<div class="error">❌ 產製失敗：' + (json.reason || json.message || '未知錯誤') + '</div>';
@@ -457,6 +633,38 @@ async function generate() {{
   }} finally {{
     btn.disabled = false;
     spinner.style.display = 'none';
+  }}
+}}
+
+async function submitFeedback() {{
+  const submit = document.getElementById('feedback_submit');
+  const msg = document.getElementById('feedback_msg');
+  submit.disabled = true;
+  msg.textContent = '送出中...';
+  msg.className = '';
+  try {{
+    const res = await fetch('/feedback', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{
+        rating: feedbackRating,
+        comment: document.getElementById('feedback_comment').value,
+        stage: 'form_generated',
+        case_category: document.getElementById('case_category_suggestion').value.trim(),
+        tax_item: document.getElementById('tax_items_suggestion').value.trim()
+      }})
+    }});
+    const json = await res.json();
+    if (json.success) {{
+      msg.textContent = '感謝您的回饋。';
+      msg.style.color = '#1e8449';
+    }} else {{
+      throw new Error(json.reason || '送出失敗');
+    }}
+  }} catch(e) {{
+    msg.textContent = '送出失敗，請稍後再試。';
+    msg.style.color = '#c0392b';
+    submit.disabled = false;
   }}
 }}
 </script>
