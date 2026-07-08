@@ -10,6 +10,13 @@ import time
 import asyncio
 import os
 
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except Exception:
+    psycopg = None
+    dict_row = None
+
 app = FastAPI()
 
 TEMPLATE_PATH = "templates/納保申請書_官方格式_可套填_v8.docx"
@@ -17,6 +24,7 @@ TEMPLATE_PATH = "templates/納保申請書_官方格式_可套填_v8.docx"
 OUTPUT_DIR = "output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 FEEDBACK_PATH = os.path.join(OUTPUT_DIR, "feedback.jsonl")
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
 download_store = {}
 
@@ -163,9 +171,125 @@ def write_feedback(data: FeedbackRequest):
         "case_category": (data.case_category or "").strip()[:80],
         "tax_item": (data.tax_item or "").strip()[:40],
     }
-    with open(FEEDBACK_PATH, "a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    if DATABASE_URL and psycopg is not None:
+        ensure_feedback_table()
+        with psycopg.connect(DATABASE_URL) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO feedback (
+                        id, created_at, rating, comment, stage, case_category, tax_item
+                    ) VALUES (
+                        %(id)s, NOW(), %(rating)s, %(comment)s, %(stage)s, %(case_category)s, %(tax_item)s
+                    )
+                    """,
+                    record,
+                )
+    else:
+        with open(FEEDBACK_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
     return record
+
+
+def ensure_feedback_table():
+    if not DATABASE_URL or psycopg is None:
+        return
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS feedback (
+                    id uuid PRIMARY KEY,
+                    created_at timestamptz NOT NULL DEFAULT NOW(),
+                    rating integer NOT NULL CHECK (rating BETWEEN 1 AND 5),
+                    comment text NOT NULL DEFAULT '',
+                    stage text NOT NULL DEFAULT '',
+                    case_category text NOT NULL DEFAULT '',
+                    tax_item text NOT NULL DEFAULT ''
+                )
+                """
+            )
+
+
+def feedback_stats():
+    empty = {
+        "total": 0,
+        "average_rating": None,
+        "rating_counts": {"1": 0, "2": 0, "3": 0, "4": 0, "5": 0},
+        "by_stage": [],
+        "by_tax_item": [],
+        "storage": "postgres" if DATABASE_URL and psycopg is not None else "jsonl",
+    }
+
+    if DATABASE_URL and psycopg is not None:
+        ensure_feedback_table()
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) total, AVG(rating)::float average_rating FROM feedback")
+                summary = cur.fetchone()
+                cur.execute("SELECT rating, COUNT(*) count FROM feedback GROUP BY rating ORDER BY rating")
+                counts = {str(i): 0 for i in range(1, 6)}
+                for row in cur.fetchall():
+                    counts[str(row["rating"])] = row["count"]
+                cur.execute("SELECT stage, COUNT(*) count, AVG(rating)::float average_rating FROM feedback GROUP BY stage ORDER BY count DESC")
+                by_stage = cur.fetchall()
+                cur.execute("SELECT tax_item, COUNT(*) count, AVG(rating)::float average_rating FROM feedback GROUP BY tax_item ORDER BY count DESC")
+                by_tax_item = cur.fetchall()
+        return {
+            "total": summary["total"],
+            "average_rating": summary["average_rating"],
+            "rating_counts": counts,
+            "by_stage": by_stage,
+            "by_tax_item": by_tax_item,
+            "storage": "postgres",
+        }
+
+    if not os.path.exists(FEEDBACK_PATH):
+        return empty
+
+    records = []
+    with open(FEEDBACK_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                records.append(json.loads(line))
+            except Exception:
+                pass
+    if not records:
+        return empty
+
+    counts = {str(i): 0 for i in range(1, 6)}
+    by_stage_map = {}
+    by_tax_map = {}
+    total_rating = 0
+    for record in records:
+        rating = int(record.get("rating", 0))
+        if 1 <= rating <= 5:
+            counts[str(rating)] += 1
+            total_rating += rating
+        stage = record.get("stage", "")
+        tax_item = record.get("tax_item", "")
+        by_stage_map.setdefault(stage, []).append(rating)
+        by_tax_map.setdefault(tax_item, []).append(rating)
+
+    def summarize(group):
+        rows = []
+        for key, ratings in group.items():
+            valid = [r for r in ratings if 1 <= r <= 5]
+            rows.append({
+                "name": key,
+                "count": len(valid),
+                "average_rating": sum(valid) / len(valid) if valid else None,
+            })
+        return sorted(rows, key=lambda row: row["count"], reverse=True)
+
+    return {
+        "total": len(records),
+        "average_rating": total_rating / len(records),
+        "rating_counts": counts,
+        "by_stage": summarize(by_stage_map),
+        "by_tax_item": summarize(by_tax_map),
+        "storage": "jsonl",
+    }
 
 
 CASE_CATEGORY_CODES = {
@@ -306,6 +430,11 @@ def submit_feedback(data: FeedbackRequest):
         )
 
 
+@app.get("/feedback-stats")
+def get_feedback_stats():
+    return JSONResponse(content=feedback_stats())
+
+
 @app.get("/survey", response_class=HTMLResponse)
 def survey_page(
     stage: str = Query(default="statement"),
@@ -326,12 +455,13 @@ def survey_page(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>納保申請助理滿意度調查</title>
+<title>納保申請助理滿意度調查 / Satisfaction Survey</title>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{font-family:'Noto Sans TC',sans-serif;background:#f0f4f8;padding:20px;min-height:100vh;display:flex;align-items:center;justify-content:center}}
 .box{{width:100%;max-width:560px;background:#fff;border-radius:12px;padding:2rem;box-shadow:0 2px 12px rgba(0,0,0,.1)}}
 h1{{font-size:1.25rem;color:#2c3e50;margin-bottom:.6rem}}
+h1 span{{font-size:1rem;color:#5d6d7e}}
 p{{color:#666;font-size:.9rem;line-height:1.7;margin-bottom:1rem}}
 .ratings{{display:grid;grid-template-columns:repeat(5,1fr);gap:.5rem;margin:1rem 0}}
 .ratings button{{border:1px solid #b8c7d9;background:#fff;color:#2c3e50;border-radius:8px;padding:.8rem .2rem;font-size:1rem;cursor:pointer}}
@@ -345,8 +475,9 @@ textarea{{width:100%;height:120px;resize:vertical;border:1px solid #ccc;border-r
 </head>
 <body>
 <div class="box">
-  <h1>納保申請助理滿意度調查</h1>
+  <h1>納保申請助理滿意度調查<br><span>Satisfaction Survey</span></h1>
   <p>請針對本次服務給予 1 至 5 分評分，也可以留下建議事項。請勿填寫姓名、電話、地址、車牌或其他個人資料。</p>
+  <p>Please rate this service from 1 to 5 and optionally leave suggestions. Do not enter your name, phone number, address, license plate number, or other personal information.</p>
   <div class="ratings" id="ratings">
     <button type="button" data-rating="1">1</button>
     <button type="button" data-rating="2">2</button>
@@ -354,8 +485,8 @@ textarea{{width:100%;height:120px;resize:vertical;border:1px solid #ccc;border-r
     <button type="button" data-rating="4">4</button>
     <button type="button" data-rating="5">5</button>
   </div>
-  <textarea id="comment" placeholder="建議事項（選填）"></textarea>
-  <button class="submit" id="submit" type="button" disabled>送出</button>
+  <textarea id="comment" placeholder="建議事項（選填） / Suggestions (optional)"></textarea>
+  <button class="submit" id="submit" type="button" disabled>送出 / Submit</button>
   <div id="msg"></div>
 </div>
 <script>
@@ -374,7 +505,7 @@ document.getElementById('submit').addEventListener('click', async () => {{
   const submit = document.getElementById('submit');
   const msg = document.getElementById('msg');
   submit.disabled = true;
-  msg.textContent = '送出中...';
+      msg.textContent = '送出中... / Submitting...';
   msg.className = '';
   try {{
     const res = await fetch('/feedback', {{
@@ -390,13 +521,13 @@ document.getElementById('submit').addEventListener('click', async () => {{
     }});
     const json = await res.json();
     if (json.success) {{
-      msg.textContent = '感謝您的回饋。';
+      msg.textContent = '感謝您的回饋。 / Thank you for your feedback.';
       msg.className = 'ok';
     }} else {{
       throw new Error(json.reason || '送出失敗');
     }}
   }} catch (e) {{
-    msg.textContent = '送出失敗，請稍後再試。';
+    msg.textContent = '送出失敗，請稍後再試。 / Submission failed. Please try again later.';
     msg.className = 'err';
     submit.disabled = false;
   }}
@@ -560,8 +691,8 @@ button:disabled{{background:#aaa;cursor:not-allowed}}
   <div id="spinner">⏳ 正在產製，請稍候…</div>
   <div id="result"></div>
   <div class="feedback" id="feedback">
-    <div class="feedback-title">滿意度調查</div>
-    <div class="feedback-note">請針對本次申請書產製服務給予 1 至 5 分評分，也可以留下建議事項。請勿填寫姓名、電話、地址、車牌或其他個人資料。</div>
+    <div class="feedback-title">滿意度調查 / Satisfaction Survey</div>
+    <div class="feedback-note">請針對本次申請書產製服務給予 1 至 5 分評分，也可以留下建議事項。請勿填寫姓名、電話、地址、車牌或其他個人資料。<br>Please rate this form generation service from 1 to 5 and optionally leave suggestions. Do not enter your name, phone number, address, license plate number, or other personal information.</div>
     <div class="rating-row" id="feedback_ratings">
       <button type="button" data-feedback-rating="1">1</button>
       <button type="button" data-feedback-rating="2">2</button>
@@ -569,8 +700,8 @@ button:disabled{{background:#aaa;cursor:not-allowed}}
       <button type="button" data-feedback-rating="4">4</button>
       <button type="button" data-feedback-rating="5">5</button>
     </div>
-    <textarea id="feedback_comment" placeholder="建議事項（選填）"></textarea>
-    <button id="feedback_submit" type="button" disabled onclick="submitFeedback()">送出回饋</button>
+    <textarea id="feedback_comment" placeholder="建議事項（選填） / Suggestions (optional)"></textarea>
+    <button id="feedback_submit" type="button" disabled onclick="submitFeedback()">送出回饋 / Submit Feedback</button>
     <div id="feedback_msg"></div>
   </div>
 </div>
@@ -640,7 +771,7 @@ async function submitFeedback() {{
   const submit = document.getElementById('feedback_submit');
   const msg = document.getElementById('feedback_msg');
   submit.disabled = true;
-  msg.textContent = '送出中...';
+  msg.textContent = '送出中... / Submitting...';
   msg.className = '';
   try {{
     const res = await fetch('/feedback', {{
@@ -656,13 +787,13 @@ async function submitFeedback() {{
     }});
     const json = await res.json();
     if (json.success) {{
-      msg.textContent = '感謝您的回饋。';
+      msg.textContent = '感謝您的回饋。 / Thank you for your feedback.';
       msg.style.color = '#1e8449';
     }} else {{
       throw new Error(json.reason || '送出失敗');
     }}
   }} catch(e) {{
-    msg.textContent = '送出失敗，請稍後再試。';
+    msg.textContent = '送出失敗，請稍後再試。 / Submission failed. Please try again later.';
     msg.style.color = '#c0392b';
     submit.disabled = false;
   }}
