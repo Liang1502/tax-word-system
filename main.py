@@ -441,6 +441,145 @@ def get_feedback_stats():
     return JSONResponse(content=feedback_stats())
 
 
+@app.get("/feedback-admin", response_class=HTMLResponse)
+def feedback_admin_page() -> HTMLResponse:
+    stats = feedback_stats()
+
+    def esc(value) -> str:
+        return str(value if value is not None else "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+    total = int(stats.get("total") or 0)
+    average = stats.get("average_rating")
+    average_text = f"{float(average):.2f}" if average is not None else "-"
+    storage = stats.get("storage") or "-"
+    rating_counts = stats.get("rating_counts") or {}
+    max_count = max([int(rating_counts.get(str(i), 0) or 0) for i in range(1, 6)] + [1])
+
+    rating_rows = []
+    for score in range(5, 0, -1):
+        count = int(rating_counts.get(str(score), 0) or 0)
+        width = round(count / max_count * 100) if max_count else 0
+        rating_rows.append(
+            f"""
+            <div class="bar-row">
+              <div class="bar-label">{score} 分</div>
+              <div class="bar-track"><div class="bar-fill" style="width:{width}%"></div></div>
+              <div class="bar-count">{count}</div>
+            </div>
+            """
+        )
+
+    def table_rows(rows, empty_label):
+        if not rows:
+            return f'<tr><td colspan="3" class="empty">{empty_label}</td></tr>'
+        rendered = []
+        for row in rows:
+            name = row.get("stage") or row.get("tax_item") or row.get("name") or "未標示"
+            count = int(row.get("count") or 0)
+            avg = row.get("average_rating")
+            avg_text = f"{float(avg):.2f}" if avg is not None else "-"
+            rendered.append(
+                f"<tr><td>{esc(name)}</td><td>{count}</td><td>{avg_text}</td></tr>"
+            )
+        return "\n".join(rendered)
+
+    html = f"""<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>滿意度統計 / Feedback Dashboard</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:'Noto Sans TC',Arial,sans-serif;background:#eef3f7;color:#243241;padding:24px;min-height:100vh}}
+.wrap{{max-width:980px;margin:0 auto}}
+.top{{display:flex;align-items:flex-end;justify-content:space-between;gap:1rem;margin-bottom:1rem}}
+h1{{font-size:1.55rem;line-height:1.35;color:#1f2d3d}}
+.subtitle{{color:#607080;font-size:.92rem;margin-top:.3rem}}
+.updated{{color:#607080;font-size:.85rem;text-align:right}}
+.cards{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:12px}}
+.card,.panel{{background:#fff;border:1px solid #dce5ee;border-radius:8px;box-shadow:0 1px 4px rgba(20,40,60,.05)}}
+.card{{padding:1rem}}
+.card-title{{font-size:.86rem;color:#607080;margin-bottom:.45rem}}
+.card-value{{font-size:1.9rem;font-weight:800;color:#1f2d3d}}
+.card-note{{font-size:.8rem;color:#7b8895;margin-top:.35rem}}
+.grid{{display:grid;grid-template-columns:minmax(280px,1fr) minmax(280px,1fr);gap:12px}}
+.panel{{padding:1rem;margin-bottom:12px}}
+h2{{font-size:1rem;color:#1f2d3d;margin-bottom:.8rem}}
+.bar-row{{display:grid;grid-template-columns:48px 1fr 48px;align-items:center;gap:.7rem;margin:.65rem 0}}
+.bar-label,.bar-count{{font-size:.9rem;color:#526170}}
+.bar-count{{text-align:right;font-weight:700;color:#1f2d3d}}
+.bar-track{{height:12px;background:#e8eef4;border-radius:999px;overflow:hidden}}
+.bar-fill{{height:100%;background:#2f80b9;border-radius:999px;min-width:0}}
+table{{width:100%;border-collapse:collapse;font-size:.9rem}}
+th,td{{padding:.65rem .55rem;border-bottom:1px solid #edf1f5;text-align:left;vertical-align:top}}
+th{{color:#526170;font-weight:700;background:#f8fafc}}
+td:nth-child(2),td:nth-child(3),th:nth-child(2),th:nth-child(3){{text-align:right;width:86px}}
+.empty{{color:#8492a0;text-align:center!important;padding:1.2rem}}
+.foot{{font-size:.82rem;color:#6d7b88;line-height:1.6;margin-top:.4rem}}
+@media(max-width:760px){{
+  body{{padding:16px}}
+  .top{{display:block}}
+  .updated{{text-align:left;margin-top:.5rem}}
+  .cards,.grid{{grid-template-columns:1fr}}
+}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="top">
+    <div>
+      <h1>滿意度統計<br>Feedback Dashboard</h1>
+      <div class="subtitle">納保申請助理服務回饋統計</div>
+    </div>
+    <div class="updated">資料來源：{esc(storage)}<br>重新整理頁面即可更新</div>
+  </div>
+
+  <section class="cards">
+    <div class="card">
+      <div class="card-title">總填寫筆數 / Total</div>
+      <div class="card-value">{total}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">平均分數 / Average</div>
+      <div class="card-value">{average_text}</div>
+      <div class="card-note">滿分 5 分</div>
+    </div>
+    <div class="card">
+      <div class="card-title">儲存狀態 / Storage</div>
+      <div class="card-value" style="font-size:1.35rem">{esc(storage)}</div>
+      <div class="card-note">postgres 代表長期資料庫</div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>分數分布 / Rating Counts</h2>
+    {''.join(rating_rows)}
+  </section>
+
+  <section class="grid">
+    <div class="panel">
+      <h2>依階段統計 / By Stage</h2>
+      <table>
+        <thead><tr><th>階段</th><th>筆數</th><th>平均</th></tr></thead>
+        <tbody>{table_rows(stats.get("by_stage") or [], "尚無階段資料")}</tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h2>依稅目統計 / By Tax Item</h2>
+      <table>
+        <thead><tr><th>稅目</th><th>筆數</th><th>平均</th></tr></thead>
+        <tbody>{table_rows(stats.get("by_tax_item") or [], "尚無稅目資料")}</tbody>
+      </table>
+    </div>
+  </section>
+  <p class="foot">此頁只顯示彙總統計，不顯示個別建議內容。若使用者誤填個資，不會直接出現在此頁面。</p>
+</main>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
+
 @app.get("/survey", response_class=HTMLResponse)
 def survey_page(
     stage: str = Query(default="statement"),
