@@ -521,21 +521,14 @@ def feedback_admin_page() -> HTMLResponse:
             )
         return "\n".join(rendered)
 
-    def format_time(value) -> str:
-        if value is None:
-            return "-"
-        text = str(value)
-        return text[:19].replace("T", " ")
-
     def entry_rows(rows):
         if not rows:
-            return '<tr><td colspan="6" class="empty">尚無單筆回饋資料</td></tr>'
+            return '<tr><td colspan="5" class="empty">尚無單筆回饋資料</td></tr>'
         rendered = []
         for row in rows:
-            comment = row.get("comment") or "未填寫"
+            comment = row.get("comment") or ""
             rendered.append(
                 "<tr>"
-                f"<td>{esc(format_time(row.get('created_at')))}</td>"
                 f"<td>{esc(row.get('rating') or '')}</td>"
                 f"<td>{esc(row.get('stage') or '未標示')}</td>"
                 f"<td>{esc(row.get('tax_item') or '未標示')}</td>"
@@ -646,7 +639,6 @@ td:nth-child(2),td:nth-child(3),th:nth-child(2),th:nth-child(3){{text-align:righ
       <table class="entries">
         <thead>
           <tr>
-            <th>時間</th>
             <th>分數</th>
             <th>階段</th>
             <th>稅目</th>
