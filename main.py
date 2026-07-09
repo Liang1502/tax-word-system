@@ -304,11 +304,17 @@ TAX_ITEM_CODES = {
     "3": "房屋稅",
     "4": "娛樂稅",
     "5": "印花稅",
+    "6": "土地增值稅",
+    "7": "契稅",
+    "8": "其他類型",
     "land": "地價稅",
+    "land_value_increment": "土地增值稅",
     "vehicle": "使用牌照稅",
     "house": "房屋稅",
+    "deed": "契稅",
     "entertainment": "娛樂稅",
     "stamp": "印花稅",
+    "other": "其他類型",
 }
 
 APPLY_METHOD_CODES = {
