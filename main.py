@@ -292,6 +292,43 @@ def feedback_stats():
     }
 
 
+def feedback_recent_entries(limit: int = 100):
+    limit = max(1, min(int(limit), 200))
+
+    if DATABASE_URL and psycopg is not None:
+        ensure_feedback_table()
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        created_at,
+                        rating,
+                        comment,
+                        stage,
+                        case_category,
+                        tax_item
+                    FROM feedback
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                return cur.fetchall()
+
+    if not os.path.exists(FEEDBACK_PATH):
+        return []
+
+    records = []
+    with open(FEEDBACK_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                records.append(json.loads(line))
+            except Exception:
+                pass
+    return list(reversed(records[-limit:]))
+
+
 CASE_CATEGORY_CODES = {
     "1": "稅捐爭議溝通與協調",
     "2": "申訴或陳情",
@@ -444,6 +481,7 @@ def get_feedback_stats():
 @app.get("/feedback-admin", response_class=HTMLResponse)
 def feedback_admin_page() -> HTMLResponse:
     stats = feedback_stats()
+    entries = feedback_recent_entries()
 
     def esc(value) -> str:
         return str(value if value is not None else "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
@@ -483,6 +521,30 @@ def feedback_admin_page() -> HTMLResponse:
             )
         return "\n".join(rendered)
 
+    def format_time(value) -> str:
+        if value is None:
+            return "-"
+        text = str(value)
+        return text[:19].replace("T", " ")
+
+    def entry_rows(rows):
+        if not rows:
+            return '<tr><td colspan="6" class="empty">尚無單筆回饋資料</td></tr>'
+        rendered = []
+        for row in rows:
+            comment = row.get("comment") or "未填寫"
+            rendered.append(
+                "<tr>"
+                f"<td>{esc(format_time(row.get('created_at')))}</td>"
+                f"<td>{esc(row.get('rating') or '')}</td>"
+                f"<td>{esc(row.get('stage') or '未標示')}</td>"
+                f"<td>{esc(row.get('tax_item') or '未標示')}</td>"
+                f"<td>{esc(row.get('case_category') or '未標示')}</td>"
+                f"<td class=\"comment-cell\">{esc(comment)}</td>"
+                "</tr>"
+            )
+        return "\n".join(rendered)
+
     html = f"""<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
@@ -515,6 +577,9 @@ table{{width:100%;border-collapse:collapse;font-size:.9rem}}
 th,td{{padding:.65rem .55rem;border-bottom:1px solid #edf1f5;text-align:left;vertical-align:top}}
 th{{color:#526170;font-weight:700;background:#f8fafc}}
 td:nth-child(2),td:nth-child(3),th:nth-child(2),th:nth-child(3){{text-align:right;width:86px}}
+.entries th,.entries td{{text-align:left!important;width:auto!important}}
+.entries td{{font-size:.86rem}}
+.comment-cell{{white-space:pre-wrap;line-height:1.55;min-width:220px}}
 .empty{{color:#8492a0;text-align:center!important;padding:1.2rem}}
 .foot{{font-size:.82rem;color:#6d7b88;line-height:1.6;margin-top:.4rem}}
 @media(max-width:760px){{
@@ -522,6 +587,8 @@ td:nth-child(2),td:nth-child(3),th:nth-child(2),th:nth-child(3){{text-align:righ
   .top{{display:block}}
   .updated{{text-align:left;margin-top:.5rem}}
   .cards,.grid{{grid-template-columns:1fr}}
+  .table-scroll{{overflow-x:auto}}
+  .entries{{min-width:760px}}
 }}
 </style>
 </head>
@@ -573,7 +640,25 @@ td:nth-child(2),td:nth-child(3),th:nth-child(2),th:nth-child(3){{text-align:righ
       </table>
     </div>
   </section>
-  <p class="foot">此頁只顯示彙總統計，不顯示個別建議內容。若使用者誤填個資，不會直接出現在此頁面。</p>
+  <section class="panel">
+    <h2>單筆回饋內容 / Individual Feedback</h2>
+    <div class="table-scroll">
+      <table class="entries">
+        <thead>
+          <tr>
+            <th>時間</th>
+            <th>分數</th>
+            <th>階段</th>
+            <th>稅目</th>
+            <th>案件性質</th>
+            <th>建議內容</th>
+          </tr>
+        </thead>
+        <tbody>{entry_rows(entries)}</tbody>
+      </table>
+    </div>
+  </section>
+  <p class="foot">此頁顯示最近 100 筆單筆回饋內容。滿意度表單已提醒使用者不要填寫姓名、電話、地址、車牌或其他個人資料。</p>
 </main>
 </body>
 </html>"""
