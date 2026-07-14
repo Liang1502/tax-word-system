@@ -354,6 +354,11 @@ TAX_ITEM_CODES = {
     "other": "其他類型",
 }
 
+FEEDBACK_STAGE_LABELS = {
+    "statement": "申請事由生成",
+    "form_generated": "申請書產製",
+}
+
 APPLY_METHOD_CODES = {
     "1": "現場申請",
     "2": "書面或傳真申請",
@@ -512,7 +517,8 @@ def feedback_admin_page() -> HTMLResponse:
             return f'<tr><td colspan="3" class="empty">{empty_label}</td></tr>'
         rendered = []
         for row in rows:
-            name = row.get("stage") or row.get("tax_item") or row.get("name") or "未標示"
+            raw_name = row.get("stage") or row.get("tax_item") or row.get("name") or "未標示"
+            name = FEEDBACK_STAGE_LABELS.get(str(raw_name), raw_name)
             count = int(row.get("count") or 0)
             avg = row.get("average_rating")
             avg_text = f"{float(avg):.2f}" if avg is not None else "-"
@@ -530,7 +536,7 @@ def feedback_admin_page() -> HTMLResponse:
             rendered.append(
                 "<tr>"
                 f"<td>{esc(row.get('rating') or '')}</td>"
-                f"<td>{esc(row.get('stage') or '未標示')}</td>"
+                f"<td>{esc(FEEDBACK_STAGE_LABELS.get(str(row.get('stage') or ''), row.get('stage') or '未標示'))}</td>"
                 f"<td>{esc(row.get('tax_item') or '未標示')}</td>"
                 f"<td>{esc(row.get('case_category') or '未標示')}</td>"
                 f"<td class=\"comment-cell\">{esc(comment)}</td>"
@@ -575,11 +581,25 @@ td:nth-child(2),td:nth-child(3),th:nth-child(2),th:nth-child(3){{text-align:righ
 .comment-cell{{white-space:pre-wrap;line-height:1.55;min-width:220px}}
 .empty{{color:#8492a0;text-align:center!important;padding:1.2rem}}
 .foot{{font-size:.82rem;color:#6d7b88;line-height:1.6;margin-top:.4rem}}
+.admin-form-grid{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}}
+.form-field{{display:flex;flex-direction:column;gap:.4rem}}
+.form-field.full{{grid-column:1/-1}}
+.form-field label{{font-size:.86rem;font-weight:700;color:#526170}}
+.form-field select,.form-field textarea{{width:100%;border:1px solid #cbd7e3;border-radius:7px;background:#fff;color:#243241;padding:.7rem .75rem;font:inherit}}
+.form-field textarea{{min-height:100px;resize:vertical;line-height:1.5}}
+.form-actions{{display:flex;align-items:center;gap:.8rem;margin-top:.85rem}}
+.admin-submit{{border:0;border-radius:7px;background:#2476a8;color:#fff;padding:.72rem 1.1rem;font:inherit;font-weight:700;cursor:pointer}}
+.admin-submit:disabled{{background:#9aabb8;cursor:not-allowed}}
+#admin-feedback-msg{{font-size:.86rem;color:#526170}}
+#admin-feedback-msg.ok{{color:#1e8449}}
+#admin-feedback-msg.err{{color:#c0392b}}
 @media(max-width:760px){{
   body{{padding:16px}}
   .top{{display:block}}
   .updated{{text-align:left;margin-top:.5rem}}
   .cards,.grid{{grid-template-columns:1fr}}
+  .admin-form-grid{{grid-template-columns:1fr}}
+  .form-field.full{{grid-column:auto}}
   .table-scroll{{overflow-x:auto}}
   .entries{{min-width:760px}}
 }}
@@ -594,6 +614,64 @@ td:nth-child(2),td:nth-child(3),th:nth-child(2),th:nth-child(3){{text-align:righ
     </div>
     <div class="updated">資料來源：{esc(storage)}<br>重新整理頁面即可更新</div>
   </div>
+
+  <section class="panel">
+    <h2>新增一筆回饋 / Add Feedback</h2>
+    <form id="admin-feedback-form">
+      <div class="admin-form-grid">
+        <div class="form-field">
+          <label for="admin-rating">評分</label>
+          <select id="admin-rating" required>
+            <option value="">請選擇</option>
+            <option value="5">5 分</option>
+            <option value="4">4 分</option>
+            <option value="3">3 分</option>
+            <option value="2">2 分</option>
+            <option value="1">1 分</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label for="admin-stage">回饋階段</label>
+          <select id="admin-stage" required>
+            <option value="">請選擇</option>
+            <option value="statement">申請事由生成</option>
+            <option value="form_generated">申請書產製</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label for="admin-tax-item">稅目</label>
+          <select id="admin-tax-item" required>
+            <option value="">請選擇</option>
+            <option value="地價稅">地價稅</option>
+            <option value="土地增值稅">土地增值稅</option>
+            <option value="使用牌照稅">使用牌照稅</option>
+            <option value="房屋稅">房屋稅</option>
+            <option value="契稅">契稅</option>
+            <option value="印花稅">印花稅</option>
+            <option value="娛樂稅">娛樂稅</option>
+            <option value="其他類型">其他類型</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label for="admin-case-category">案件性質</label>
+          <select id="admin-case-category" required>
+            <option value="">請選擇</option>
+            <option value="稅捐爭議溝通與協調">稅捐爭議溝通與協調</option>
+            <option value="申訴或陳情">申訴或陳情</option>
+            <option value="行政救濟諮詢與協助">行政救濟諮詢與協助</option>
+          </select>
+        </div>
+        <div class="form-field full">
+          <label for="admin-comment">建議內容（選填）</label>
+          <textarea id="admin-comment" maxlength="1000" placeholder="請勿填寫姓名、電話、地址、車牌或其他個人資料"></textarea>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="admin-submit" id="admin-feedback-submit" type="submit">新增回饋</button>
+        <span id="admin-feedback-msg" role="status"></span>
+      </div>
+    </form>
+  </section>
 
   <section class="cards">
     <div class="card">
@@ -652,6 +730,41 @@ td:nth-child(2),td:nth-child(3),th:nth-child(2),th:nth-child(3){{text-align:righ
   </section>
   <p class="foot">此頁顯示最近 100 筆單筆回饋內容。滿意度表單已提醒使用者不要填寫姓名、電話、地址、車牌或其他個人資料。</p>
 </main>
+<script>
+document.getElementById('admin-feedback-form').addEventListener('submit', async (event) => {{
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = document.getElementById('admin-feedback-submit');
+  const msg = document.getElementById('admin-feedback-msg');
+  if (!form.reportValidity()) return;
+
+  submit.disabled = true;
+  msg.textContent = '新增中...';
+  msg.className = '';
+  try {{
+    const res = await fetch('/feedback', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{
+        rating: Number(document.getElementById('admin-rating').value),
+        stage: document.getElementById('admin-stage').value,
+        tax_item: document.getElementById('admin-tax-item').value,
+        case_category: document.getElementById('admin-case-category').value,
+        comment: document.getElementById('admin-comment').value
+      }})
+    }});
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.reason || '新增失敗');
+    msg.textContent = '新增成功，正在更新統計...';
+    msg.className = 'ok';
+    setTimeout(() => window.location.reload(), 700);
+  }} catch (error) {{
+    msg.textContent = '新增失敗：' + error.message;
+    msg.className = 'err';
+    submit.disabled = false;
+  }}
+}});
+</script>
 </body>
 </html>"""
     return HTMLResponse(content=html)
