@@ -575,8 +575,6 @@ td:nth-child(2),td:nth-child(3),th:nth-child(2),th:nth-child(3){{text-align:righ
 .comment-cell{{white-space:pre-wrap;line-height:1.55;min-width:220px}}
 .empty{{color:#8492a0;text-align:center!important;padding:1.2rem}}
 .foot{{font-size:.82rem;color:#6d7b88;line-height:1.6;margin-top:.4rem}}
-.admin-nav-link{{display:inline-block;margin-top:.55rem;color:#2476a8;font-size:.86rem;font-weight:700;text-decoration:none}}
-.admin-nav-link:hover{{text-decoration:underline}}
 @media(max-width:760px){{
   body{{padding:16px}}
   .top{{display:block}}
@@ -593,7 +591,6 @@ td:nth-child(2),td:nth-child(3),th:nth-child(2),th:nth-child(3){{text-align:righ
     <div>
       <h1>滿意度統計<br>Feedback Dashboard</h1>
       <div class="subtitle">納保申請助理服務回饋統計</div>
-      <a class="admin-nav-link" href="/feedback-admin/new">前往新增回饋頁面 / Add Feedback</a>
     </div>
     <div class="updated">資料來源：{esc(storage)}<br>重新整理頁面即可更新</div>
   </div>
@@ -675,8 +672,6 @@ body{font-family:'Noto Sans TC',Arial,sans-serif;background:#eef3f7;color:#24324
 .top{margin-bottom:1rem}
 h1{font-size:1.5rem;line-height:1.35;color:#1f2d3d}
 .subtitle{color:#607080;font-size:.9rem;line-height:1.6;margin-top:.35rem}
-.back-link{display:inline-block;margin-top:.55rem;color:#2476a8;font-size:.86rem;font-weight:700;text-decoration:none}
-.back-link:hover{text-decoration:underline}
 .panel{background:#fff;border:1px solid #dce5ee;border-radius:8px;box-shadow:0 1px 4px rgba(20,40,60,.05);padding:1rem}
 .form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .form-field{display:flex;flex-direction:column;gap:.4rem}
@@ -703,7 +698,6 @@ h1{font-size:1.5rem;line-height:1.35;color:#1f2d3d}
   <div class="top">
     <h1>新增一筆滿意度回饋<br>Add Feedback</h1>
     <div class="subtitle">請完整選擇評分、回饋階段、稅目與案件性質；建議內容可留白。</div>
-    <a class="back-link" href="/feedback-admin">返回滿意度統計 / Back to Dashboard</a>
   </div>
   <section class="panel">
     <form id="feedback-entry-form">
