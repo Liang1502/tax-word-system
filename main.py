@@ -36,7 +36,7 @@ EXPIRED_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>連結已失效</title>
+<title>連結已失效 / Link Expired</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Noto Sans TC',sans-serif;background:#f0f4f8;display:flex;align-items:center;justify-content:center;min-height:100vh}
@@ -47,8 +47,8 @@ p{color:#555;font-size:.93rem;line-height:1.7}
 </head>
 <body>
 <div class="box">
-  <h1>⚠️ 此連結已失效</h1>
-  <p>每個申請書產製連結僅能使用一次。<br>如需重新產製，請返回對話重新操作。</p>
+  <h1>⚠️ 此連結已失效<br>Link Expired</h1>
+  <p>每個申請書產製連結僅能使用一次。<br>如需重新產製，請返回對話重新操作。<br><br>Each application form generation link can only be used once.<br>To generate a new form, please return to the conversation and create a new link.</p>
 </div>
 </body>
 </html>"""
@@ -966,7 +966,7 @@ def form_page(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>納保申請書產製</title>
+<title>納保申請書產製 / Application Form Generation</title>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{font-family:'Noto Sans TC',sans-serif;background:#f0f4f8;padding:20px;min-height:100vh}}
@@ -999,59 +999,59 @@ button:disabled{{background:#aaa;cursor:not-allowed}}
 </head>
 <body>
 <div class="container">
-  <h1>📄 納保申請書產製</h1>
-  <p style="color:#666;font-size:.88rem;margin-bottom:1.2rem">由納保申請助理轉介。所有欄位已自動填入，確認後點「產製申請書」即可下載。</p>
+  <h1>📄 納保申請書產製<br><span style="font-size:1rem;font-weight:600;color:#526170">Application Form Generation</span></h1>
+  <p style="color:#666;font-size:.88rem;margin-bottom:1.2rem">由納保申請助理轉介。所有欄位已自動填入，確認後點「產製申請書」即可下載。<br>Transferred from the Taxpayer Rights Protection Assistant. Please review the pre-filled fields, then select “Generate Application Form” to download.</p>
 
   <div class="row">
     <div class="field">
-      <label>申請年份（民國）</label>
+      <label>申請年份（民國） / Application Year (ROC)</label>
       <input id="apply_year" value="{esc(apply_year)}" placeholder="114">
     </div>
     <div class="field">
-      <label>月份</label>
+      <label>月份 / Month</label>
       <input id="apply_month" value="{esc(apply_month)}" placeholder="3">
     </div>
     <div class="field">
-      <label>日期</label>
+      <label>日期 / Day</label>
       <input id="apply_day" value="{esc(apply_day)}" placeholder="15">
     </div>
   </div>
 
   <div class="field">
-    <label>案件類型建議</label>
+    <label>案件性質建議 / Suggested Case Category</label>
     <input id="case_category_suggestion" value="{esc(case_category_suggestion)}">
   </div>
 
   <div class="field">
-    <label>稅目建議</label>
+    <label>稅目建議 / Suggested Tax Item</label>
     <input id="tax_items_suggestion" value="{esc(tax_items_suggestion)}">
   </div>
 
   <hr class="divider">
 
   <div class="field">
-    <label>申請事由</label>
-    <textarea id="formal_statement" placeholder="申請事由">{esc(formal_statement)}</textarea>
-    <div class="hint">※ 如需修改可直接編輯</div>
+    <label>申請事由 / Application Statement</label>
+    <textarea id="formal_statement" placeholder="申請事由 / Application Statement">{esc(formal_statement)}</textarea>
+    <div class="hint">※ 如需修改可直接編輯 / You may edit the statement before generating the form.</div>
   </div>
 
   <hr class="divider">
 
   <div class="field">
-    <label>申請方式</label>
+    <label>申請方式 / Application Method</label>
     <input id="apply_method_suggestion" value="{esc(apply_method_suggestion)}">
   </div>
   <div class="field">
-    <label>回覆方式</label>
+    <label>回覆方式 / Reply Method</label>
     <input id="reply_method_suggestion" value="{esc(reply_method_suggestion)}">
   </div>
   <div class="field">
-    <label>通知方式</label>
+    <label>通知方式 / Notification Method</label>
     <input id="notify_method_suggestion" value="{esc(notify_method_suggestion)}">
   </div>
 
-  <button id="btn" onclick="generate()">產製申請書</button>
-  <div id="spinner">⏳ 正在產製，請稍候…</div>
+  <button id="btn" onclick="generate()">產製申請書 / Generate Application Form</button>
+  <div id="spinner">⏳ 正在產製，請稍候… / Generating. Please wait...</div>
   <div id="result"></div>
   <div class="feedback" id="feedback">
     <div class="feedback-title">滿意度調查 / Satisfaction Survey</div>
@@ -1086,7 +1086,7 @@ async function generate() {{
 
   const formal = document.getElementById('formal_statement').value.trim();
   if (!formal) {{
-    result.innerHTML = '<div class="error">⚠️ 申請事由為空，請確認後再試！</div>';
+    result.innerHTML = '<div class="error">⚠️ 申請事由為空，請確認後再試！<br>The application statement is blank. Please check and try again.</div>';
     return;
   }}
 
@@ -1116,14 +1116,14 @@ async function generate() {{
     }});
     const json = await res.json();
     if (json.success && json.download_url) {{
-      result.innerHTML = '<div class="success">✅ 申請書已產製完成！若下載未自動開始，<a href="' + json.download_url + '" target="_blank">請點此下載</a></div>';
+      result.innerHTML = '<div class="success">✅ 申請書已產製完成！若下載未自動開始，<a href="' + json.download_url + '" target="_blank">請點此下載</a><br>The application form has been generated. If the download does not start automatically, <a href="' + json.download_url + '" target="_blank">click here to download</a>.</div>';
       document.getElementById('feedback').style.display = 'block';
       setTimeout(() => {{ window.location.href = json.download_url; }}, 500);
     }} else {{
-      result.innerHTML = '<div class="error">❌ 產製失敗：' + (json.reason || json.message || '未知錯誤') + '</div>';
+      result.innerHTML = '<div class="error">❌ 產製失敗 / Generation failed: ' + (json.reason || json.message || '未知錯誤 / Unknown error') + '</div>';
     }}
   }} catch(e) {{
-    result.innerHTML = '<div class="error">❌ 網路錯誤：' + e.message + '</div>';
+    result.innerHTML = '<div class="error">❌ 網路錯誤 / Network error: ' + e.message + '</div>';
   }} finally {{
     btn.disabled = false;
     spinner.style.display = 'none';
