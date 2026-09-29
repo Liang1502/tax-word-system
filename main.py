@@ -216,6 +216,15 @@ def normalize_choice(value: str, mapping: dict[str, str]) -> str:
     return mapping.get(value, value)
 
 
+def split_formal_statement(value: str) -> tuple[str, str]:
+    statement = value.strip()
+    marker = "本內容係透過"
+    marker_index = statement.rfind(marker)
+    if marker_index <= 0:
+        return statement, ""
+    return statement[:marker_index].rstrip(), statement[marker_index:].strip()
+
+
 def write_feedback(data: FeedbackRequest):
     rating = int(data.rating)
     if rating < 1 or rating > 5:
@@ -438,6 +447,8 @@ def generate_word(data: GenerateRequest):
 
         template_path = TEMPLATE_PATHS.get(data.template_version, TEMPLATE_PATH)
 
+        statement_body, statement_note = split_formal_statement(data.formal_statement)
+
         replacements = {
 
             "{{apply_year}}": data.apply_year,
@@ -445,6 +456,8 @@ def generate_word(data: GenerateRequest):
             "{{apply_day}}": data.apply_day,
 
             "{{formal_statement}}": data.formal_statement,
+            "{{formal_statement_body}}": statement_body,
+            "{{formal_statement_note}}": statement_note,
 
             "{{case_category_suggestion}}": data.case_category_suggestion,
             "{{tax_items_suggestion}}": data.tax_items_suggestion,
