@@ -9,6 +9,9 @@ import uuid
 import time
 import asyncio
 import os
+from zipfile import ZIP_DEFLATED, ZipFile
+
+from lxml import etree
 
 try:
     import psycopg
@@ -20,6 +23,10 @@ except Exception:
 app = FastAPI()
 
 TEMPLATE_PATH = "templates/納保申請書_官方格式_可套填_v8.docx"
+TEMPLATE_PATHS = {
+    "legacy": TEMPLATE_PATH,
+    "voice_1150811": "templates/納保申請書_官方格式_可套填_voice_1150811.docx",
+}
 
 OUTPUT_DIR = "output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -55,6 +62,8 @@ p{color:#555;font-size:.93rem;line-height:1.7}
 
 
 class GenerateRequest(BaseModel):
+
+    template_version: str = "legacy"
 
     apply_year: str
     apply_month: str
@@ -150,6 +159,56 @@ def has_placeholder(doc):
                         return True
 
     return False
+
+
+def generate_preserving_official_layout(template_path, output_path, replacements):
+    """Replace placeholders without re-saving the DOCX through python-docx.
+
+    The 115.8.11 official file contains legacy Word drawing content that
+    python-docx drops on save. Editing document.xml directly preserves it.
+    """
+    word_namespace = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    text_tag = f"{{{word_namespace}}}t"
+    break_tag = f"{{{word_namespace}}}br"
+    xml_space = "{http://www.w3.org/XML/1998/namespace}space"
+
+    with ZipFile(template_path, "r") as source:
+        document_xml = source.read("word/document.xml")
+        root = etree.fromstring(document_xml)
+
+        for text_node in root.iter(text_tag):
+            original = text_node.text or ""
+            if not any(key in original for key in replacements):
+                continue
+
+            combined = original
+            for key, value in replacements.items():
+                combined = combined.replace(key, str(value or ""))
+            lines = combined.splitlines() or [""]
+            text_node.text = lines[0]
+            text_node.set(xml_space, "preserve")
+
+            run = text_node.getparent()
+            insert_at = run.index(text_node) + 1
+            for line in lines[1:]:
+                run.insert(insert_at, etree.Element(break_tag))
+                insert_at += 1
+                next_text = etree.Element(text_tag)
+                next_text.text = line
+                next_text.set(xml_space, "preserve")
+                run.insert(insert_at, next_text)
+                insert_at += 1
+
+        rendered_xml = etree.tostring(
+            root, xml_declaration=True, encoding="UTF-8", standalone="yes"
+        )
+        if b"{{" in rendered_xml:
+            raise ValueError("Word 殘留 placeholder")
+
+        with ZipFile(output_path, "w", ZIP_DEFLATED) as destination:
+            for item in source.infolist():
+                content = rendered_xml if item.filename == "word/document.xml" else source.read(item.filename)
+                destination.writestr(item, content)
 
 
 def normalize_choice(value: str, mapping: dict[str, str]) -> str:
@@ -377,7 +436,7 @@ def generate_word(data: GenerateRequest):
 
     try:
 
-        doc = Document(TEMPLATE_PATH)
+        template_path = TEMPLATE_PATHS.get(data.template_version, TEMPLATE_PATH)
 
         replacements = {
 
@@ -407,29 +466,32 @@ def generate_word(data: GenerateRequest):
             "{{evidence_list}}": data.evidence_list
         }
 
-        replace_all(doc, replacements)
-
-        if data.notify_email.strip() == "":
-            remove_email_label(doc)
-
-        if has_placeholder(doc):
-
-            return JSONResponse(
-                status_code=500,
-                content={
-                    "success": False,
-                    "message": "產製失敗",
-                    "reason": "Word 殘留 placeholder"
-                }
-            )
-
         filename = f"申請書_{data.apply_year}{int(data.apply_month):02d}{int(data.apply_day):02d}.docx"
 
         unique_name = f"{uuid.uuid4()}_{filename}"
 
         file_path = os.path.join(OUTPUT_DIR, unique_name)
 
-        doc.save(file_path)
+        if data.template_version == "voice_1150811":
+            generate_preserving_official_layout(template_path, file_path, replacements)
+        else:
+            doc = Document(template_path)
+            replace_all(doc, replacements)
+
+            if data.notify_email.strip() == "":
+                remove_email_label(doc)
+
+            if has_placeholder(doc):
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        "success": False,
+                        "message": "產製失敗",
+                        "reason": "Word 殘留 placeholder"
+                    }
+                )
+
+            doc.save(file_path)
 
         token = str(uuid.uuid4())
 
@@ -903,6 +965,7 @@ document.getElementById('submit').addEventListener('click', async () => {{
 
 @app.get("/form", response_class=HTMLResponse)
 def form_page(
+    template_version: str = Query(default="legacy"),
     apply_year: str = Query(default=""),
     apply_month: str = Query(default=""),
     apply_day: str = Query(default=""),
@@ -921,7 +984,10 @@ def form_page(
     r: str = Query(default=""),
     n: str = Query(default=""),
     s: str = Query(default=""),
+    tv: str = Query(default=""),
 ) -> HTMLResponse:
+
+    template_version = tv or template_version
 
     apply_year = apply_year or y
     apply_month = apply_month or m
@@ -938,6 +1004,7 @@ def form_page(
 
     if has_params:
         param_str = "|".join([
+            template_version,
             apply_year, apply_month, apply_day,
             case_category_suggestion, tax_items_suggestion,
             apply_method_suggestion, reply_method_suggestion,
@@ -1003,6 +1070,7 @@ button:disabled{{background:#aaa;cursor:not-allowed}}
   <p style="color:#666;font-size:.88rem;margin-bottom:1.2rem">由納保申請助理轉介。所有欄位已自動填入，確認後點「產製申請書」即可下載。<br>Transferred from the Taxpayer Rights Protection Assistant. Please review the pre-filled fields, then select “Generate Application Form” to download.</p>
 
   <div class="row">
+    <input id="template_version" type="hidden" value="{esc(template_version)}">
     <div class="field">
       <label>申請年份（民國） / Application Year (ROC)</label>
       <input id="apply_year" value="{esc(apply_year)}" placeholder="114">
@@ -1095,6 +1163,7 @@ async function generate() {{
   result.innerHTML = '';
 
   const payload = {{
+    template_version: document.getElementById('template_version').value.trim() || 'legacy',
     apply_year: document.getElementById('apply_year').value.trim(),
     apply_month: document.getElementById('apply_month').value.trim(),
     apply_day: document.getElementById('apply_day').value.trim(),
