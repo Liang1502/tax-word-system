@@ -1,8 +1,9 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Header, Query
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from pydantic import BaseModel
 from docx import Document
 import hashlib
+import hmac
 import json
 import re
 import uuid
@@ -31,7 +32,9 @@ TEMPLATE_PATHS = {
 OUTPUT_DIR = "output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 FEEDBACK_PATH = os.path.join(OUTPUT_DIR, "feedback.jsonl")
+VOICE_USAGE_PATH = os.path.join(OUTPUT_DIR, "voice_usage.jsonl")
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+VOICE_USAGE_TOKEN = os.getenv("VOICE_USAGE_TOKEN", "").strip()
 
 download_store = {}
 
@@ -98,6 +101,13 @@ class FeedbackRequest(BaseModel):
     stage: str = ""
     case_category: str = ""
     tax_item: str = ""
+
+
+class VoiceUsageRequest(BaseModel):
+
+    status: str
+    language: str = ""
+    case_id: str = ""
 
 
 def replace_text(paragraph, replacements):
@@ -277,6 +287,150 @@ def ensure_feedback_table():
                 )
                 """
             )
+
+
+VOICE_USAGE_STATUSES = {
+    "success",
+    "rate_limited",
+    "invalid_audio",
+    "too_large",
+    "not_configured",
+    "upstream_error",
+    "processing_error",
+}
+
+
+def ensure_voice_usage_table():
+    if not DATABASE_URL or psycopg is None:
+        return
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS voice_usage (
+                    id uuid PRIMARY KEY,
+                    created_at timestamptz NOT NULL DEFAULT NOW(),
+                    status text NOT NULL,
+                    language text NOT NULL DEFAULT '',
+                    case_id text NOT NULL DEFAULT ''
+                )
+                """
+            )
+
+
+def write_voice_usage(data: VoiceUsageRequest):
+    status = (data.status or "").strip()
+    if status not in VOICE_USAGE_STATUSES:
+        raise ValueError("unsupported voice usage status")
+    language = (data.language or "").strip()
+    case_id = (data.case_id or "").strip()
+    record = {
+        "id": str(uuid.uuid4()),
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
+        "status": status,
+        "language": language if language in {"zh", "en"} else "",
+        "case_id": case_id if case_id in {str(i) for i in range(1, 9)} else "",
+    }
+    if DATABASE_URL and psycopg is not None:
+        ensure_voice_usage_table()
+        with psycopg.connect(DATABASE_URL) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO voice_usage (id, created_at, status, language, case_id)
+                    VALUES (%(id)s, NOW(), %(status)s, %(language)s, %(case_id)s)
+                    """,
+                    record,
+                )
+    else:
+        with open(VOICE_USAGE_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return record
+
+
+def voice_usage_stats():
+    empty = {
+        "total": 0,
+        "success": 0,
+        "failed": 0,
+        "success_rate": None,
+        "by_status": [],
+        "by_case": [],
+        "by_day": [],
+        "storage": "postgres" if DATABASE_URL and psycopg is not None else "jsonl",
+    }
+    if DATABASE_URL and psycopg is not None:
+        ensure_voice_usage_table()
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) total, COUNT(*) FILTER (WHERE status = 'success') success FROM voice_usage"
+                )
+                summary = cur.fetchone()
+                cur.execute("SELECT status name, COUNT(*) count FROM voice_usage GROUP BY status ORDER BY count DESC")
+                by_status = cur.fetchall()
+                cur.execute("SELECT case_id name, COUNT(*) count FROM voice_usage GROUP BY case_id ORDER BY count DESC")
+                by_case = cur.fetchall()
+                cur.execute(
+                    """
+                    SELECT TO_CHAR(created_at AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD') day,
+                           COUNT(*) count,
+                           COUNT(*) FILTER (WHERE status = 'success') success
+                    FROM voice_usage
+                    GROUP BY day
+                    ORDER BY day DESC
+                    LIMIT 90
+                    """
+                )
+                by_day = cur.fetchall()
+        total = int(summary["total"] or 0)
+        success = int(summary["success"] or 0)
+        return {
+            "total": total,
+            "success": success,
+            "failed": total - success,
+            "success_rate": round(success / total * 100, 1) if total else None,
+            "by_status": by_status,
+            "by_case": by_case,
+            "by_day": by_day,
+            "storage": "postgres",
+        }
+    if not os.path.exists(VOICE_USAGE_PATH):
+        return empty
+    records = []
+    with open(VOICE_USAGE_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                records.append(json.loads(line))
+            except Exception:
+                pass
+    if not records:
+        return empty
+    status_counts = {}
+    case_counts = {}
+    day_counts = {}
+    for record in records:
+        status = str(record.get("status") or "")
+        case_id = str(record.get("case_id") or "")
+        day = str(record.get("created_at") or "")[:10]
+        status_counts[status] = status_counts.get(status, 0) + 1
+        case_counts[case_id] = case_counts.get(case_id, 0) + 1
+        day_counts.setdefault(day, {"count": 0, "success": 0})
+        day_counts[day]["count"] += 1
+        if status == "success":
+            day_counts[day]["success"] += 1
+    total = len(records)
+    success = status_counts.get("success", 0)
+    return {
+        "total": total,
+        "success": success,
+        "failed": total - success,
+        "success_rate": round(success / total * 100, 1) if total else None,
+        "by_status": [{"name": k, "count": v} for k, v in sorted(status_counts.items(), key=lambda item: item[1], reverse=True)],
+        "by_case": [{"name": k, "count": v} for k, v in sorted(case_counts.items(), key=lambda item: item[1], reverse=True)],
+        "by_day": [{"day": day, **values} for day, values in sorted(day_counts.items(), reverse=True)[:90]],
+        "storage": "jsonl",
+    }
 
 
 def feedback_stats():
@@ -551,6 +705,55 @@ def submit_feedback(data: FeedbackRequest):
 @app.get("/feedback-stats")
 def get_feedback_stats():
     return JSONResponse(content=feedback_stats())
+
+
+@app.post("/voice-usage")
+def submit_voice_usage(data: VoiceUsageRequest, x_voice_usage_token: str = Header(default="")):
+    if VOICE_USAGE_TOKEN and not hmac.compare_digest(x_voice_usage_token, VOICE_USAGE_TOKEN):
+        return JSONResponse(status_code=403, content={"success": False, "message": "forbidden"})
+    try:
+        record = write_voice_usage(data)
+        return JSONResponse(content={"success": True, "id": record["id"]})
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"success": False, "message": "usage rejected", "reason": str(e)})
+
+
+@app.get("/voice-usage-stats")
+def get_voice_usage_stats():
+    return JSONResponse(content=voice_usage_stats())
+
+
+@app.get("/voice-usage-admin", response_class=HTMLResponse)
+def voice_usage_admin_page() -> HTMLResponse:
+    stats = voice_usage_stats()
+    status_labels = {
+        "success": "成功",
+        "rate_limited": "超過次數限制",
+        "invalid_audio": "音檔無效",
+        "too_large": "音檔過大",
+        "not_configured": "服務未設定",
+        "upstream_error": "辨識服務失敗",
+        "processing_error": "處理失敗",
+    }
+    case_labels = {str(i): f"第 {i} 類" for i in range(1, 9)}
+    case_labels[""] = "未分類"
+    status_rows = "".join(
+        f"<tr><td>{status_labels.get(str(row.get('name') or ''), str(row.get('name') or '-'))}</td><td>{int(row.get('count') or 0)}</td></tr>"
+        for row in stats.get("by_status", [])
+    ) or '<tr><td colspan="2">尚無資料</td></tr>'
+    case_rows = "".join(
+        f"<tr><td>{case_labels.get(str(row.get('name') or ''), '未分類')}</td><td>{int(row.get('count') or 0)}</td></tr>"
+        for row in stats.get("by_case", [])
+    ) or '<tr><td colspan="2">尚無資料</td></tr>'
+    day_rows = "".join(
+        f"<tr><td>{row.get('day') or '-'}</td><td>{int(row.get('count') or 0)}</td><td>{int(row.get('success') or 0)}</td></tr>"
+        for row in stats.get("by_day", [])
+    ) or '<tr><td colspan="3">尚無資料</td></tr>'
+    success_rate = stats.get("success_rate")
+    rate_text = f"{success_rate}%" if success_rate is not None else "-"
+    return HTMLResponse(f"""<!doctype html><html lang="zh-TW"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>語音辨識使用統計</title><style>
+body{{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans TC',sans-serif;background:#f4f7f9;color:#18323f;margin:0;padding:24px}}main{{max-width:1000px;margin:auto}}h1{{font-size:28px}}.cards{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}}.card,section{{background:white;border:1px solid #d9e2e8;border-radius:8px;padding:18px}}.value{{font-size:30px;font-weight:700;margin-top:8px}}.tables{{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}}section{{margin-top:16px}}table{{width:100%;border-collapse:collapse}}th,td{{padding:10px;border-bottom:1px solid #e3e9ed;text-align:left}}th{{background:#eef4f6}}.note{{color:#5b6c75}}@media(max-width:720px){{.cards,.tables{{grid-template-columns:1fr 1fr}}}}@media(max-width:480px){{.cards,.tables{{grid-template-columns:1fr}}}}
+</style></head><body><main><h1>語音辨識使用統計</h1><p class="note">僅統計辨識請求結果，不保存錄音、逐字稿或 IP。</p><div class="cards"><div class="card">總請求數<div class="value">{stats['total']}</div></div><div class="card">成功<div class="value">{stats['success']}</div></div><div class="card">失敗<div class="value">{stats['failed']}</div></div><div class="card">成功率<div class="value">{rate_text}</div></div></div><div class="tables"><section><h2>結果分類</h2><table><tr><th>結果</th><th>次數</th></tr>{status_rows}</table></section><section><h2>案件類型</h2><table><tr><th>類型</th><th>次數</th></tr>{case_rows}</table></section></div><section><h2>每日使用情形</h2><table><tr><th>日期</th><th>總請求</th><th>成功</th></tr>{day_rows}</table></section></main></body></html>""")
 
 
 @app.get("/feedback-admin", response_class=HTMLResponse)
