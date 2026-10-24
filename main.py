@@ -373,7 +373,7 @@ def voice_usage_stats():
                 by_case = cur.fetchall()
                 cur.execute(
                     """
-                    SELECT TO_CHAR(created_at AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD') day,
+                    SELECT TO_CHAR(created_at AT TIME ZONE 'Asia/Taipei', 'YYYY-MM-DD') AS day,
                            COUNT(*) count,
                            COUNT(*) FILTER (WHERE status = 'success') success
                     FROM voice_usage
